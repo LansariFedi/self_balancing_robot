@@ -1,0 +1,50 @@
+# STM32CubeIDE / Eclipse
+.settings/
+.metadata/
+*.launch
+*.log
+
+# Build outputs
+Debug/
+Release/
+build/
+out/
+dist/
+
+# Objects and intermediates
+*.o
+*.d
+*.su
+*.a
+
+# Binaries / images / maps
+*.elf
+*.axf
+*.map
+*.lst
+*.list
+*.lss
+*.hex
+*.bin
+*.srec
+*.eep
+
+# Coverage / debug
+*.gcda
+*.gcno
+*.gcov
+.gdb_history
+.gdbinit
+
+# Editor / OS
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Keep CubeMX project file tracked
+!*.ioc
