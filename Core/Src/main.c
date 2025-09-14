@@ -63,9 +63,9 @@ static volatile uint8_t second_flag = 0;   /* Set each second to trigger UART ou
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-I2C_HandleTypeDef hi2c1;
-DMA_HandleTypeDef hdma_i2c1_rx;
-DMA_HandleTypeDef hdma_i2c1_tx;
+I2C_HandleTypeDef hi2c2;
+DMA_HandleTypeDef hdma_i2c2_rx;
+DMA_HandleTypeDef hdma_i2c2_tx;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim6;
@@ -95,20 +95,20 @@ static float  gy_dps;
 /* -------------------------------------------------------------------------- */
 
 /* PID gains (output units: PWM counts if u_max = ARR). */
-static float Kp = 50.0f;  /* Start modest; adjust later */
-static float Ki = 0.7f;   /* Begin at 0 to tune P & D first */
-static float Kd = 2.0f;   /* Derivative on gyro (see formula) */
+static float Kp = 1.0f;  /* Start modest; adjust later */
+static float Ki = 0.0f;   /* Begin at 0 to tune P & D first */
+static float Kd = 0.0f;   /* Derivative on gyro (see formula) */
 
 /* Safety & scaling. */
 static float max_power_scale = 0.8f;   /* scale to 80% of 4199 (3359) */
 static float min_power_scale = 0.6f;   /* scale to 60% of 4199 (2519) */
 
-static float max_deadband = 5.0f;   /* Angle above which output is allowed */
-static float min_deadband = 2.0f;   /* Angle below which output/integral are reset */
+static float max_deadband = 1.0f;   /* Angle above which output is allowed */
+static float min_deadband = 1.0f;   /* Angle below which output/integral are reset */
 
-static float safety_angle_deg = 30.0f; /* Disable motors beyond this tilt degree */
+static float safety_angle_deg = 35.0f; /* Disable motors beyond this tilt degree */
 
-static float offset_angle = 6.0f; /* Manual angle offsets. */
+static float offset_angle = -2.0f; /* Manual angle offsets. */
 
 
 /* Integral windup guard (absolute value clamp). */
@@ -150,10 +150,10 @@ float min_duty;
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
-static void MX_I2C1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -162,18 +162,18 @@ static void MX_TIM1_Init(void);
 /* USER CODE BEGIN 0 */
 static HAL_StatusTypeDef mpu_read_u8(uint8_t reg, uint8_t *val)
 {
-  return HAL_I2C_Mem_Read(&hi2c1, MPU_ADDR, reg, I2C_MEMADD_SIZE_8BIT, val, 1, 100);
+  return HAL_I2C_Mem_Read(&hi2c2, MPU_ADDR, reg, I2C_MEMADD_SIZE_8BIT, val, 1, 100);
 }
 
 static HAL_StatusTypeDef mpu_write_u8(uint8_t reg, uint8_t val)
 {
-  return HAL_I2C_Mem_Write(&hi2c1, MPU_ADDR, reg, I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
+  return HAL_I2C_Mem_Write(&hi2c2, MPU_ADDR, reg, I2C_MEMADD_SIZE_8BIT, &val, 1, 100);
 }
 
 static HAL_StatusTypeDef mpu_read_burst_dma(uint8_t start_reg, uint8_t *buf, uint16_t len)
 {
   /* HAL will perform: [S | Addr(W) | start_reg] then repeated start [Addr(R) | read len] using DMA */
-  return HAL_I2C_Mem_Read_DMA(&hi2c1, MPU_ADDR, start_reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+  return HAL_I2C_Mem_Read_DMA(&hi2c2, MPU_ADDR, start_reg, I2C_MEMADD_SIZE_8BIT, buf, len);
 }
 
 static bool mpu_init_200hz(void)
@@ -330,7 +330,7 @@ static void control_update(void)
   /* Simple 2-axis pitch using only X (forward) and Z (up) acceleration.
     pitch ≈ atan2(-Ax, Az). This ignores Ay so it's a bit less noise sensitive for pure forward/back motion. */
 
-  pitch_acc_deg = atan2f(-ax_g, az_g) * 57.2957795131f; /* rad->deg */
+  pitch_acc_deg = atan2f(-ax_g, -az_g) * 57.2957795131f; /* rad->deg */
 
   if (!attitude_initialized) {
     prev_pitch_deg = pitch_acc_deg;
@@ -342,46 +342,7 @@ static void control_update(void)
   prev_pitch_deg = pitch_deg;
 
 
-  /* ----------------------------------------------------------------------
-     PID CONTROL EXPLAINED (for beginners):
-
-     PID stands for Proportional, Integral, Derivative. It's a way to control
-     something (like your robot's balance) by looking at how far you are from
-     your target (setpoint), how long you've been off, and how fast you're moving.
-
-     - error = setpoint - measured_value
-       Here, setpoint is 0 degrees (upright), measured_value is pitch_deg.
-       So error = 0 - pitch_deg = -pitch_deg
-
-     - Proportional (P): reacts to how far you are from upright.
-       pid_P = Kp * error
-       If robot tilts, P pushes harder to correct.
-
-     - Integral (I): adds up error over time (helps fix small steady errors).
-       pid_I += Ki * error * dt
-       If robot leans a bit for a long time, I slowly increases to push back.
-       Anti-windup: clamps I so it doesn't get too big.
-
-     - Derivative (D): reacts to how fast you're tilting (gyro).
-       pid_D = Kd * (-gy_dps)
-       If robot starts falling fast, D pushes against the motion.
-       (Negative sign: if tilting forward, D pushes backward.)
-       Gyro-based D is more direct and responsive than error calculation.
-
-     - Total output:
-       pid_u = pid_P + pid_I + pid_D
-       This value is mapped to motor PWM (how hard to push, and which direction).
-
-     Tuning:
-       - Kp: how strongly you react to tilt (start small, increase until robot reacts well)
-       - Ki: how much you care about long-term error (start at 0, increase if robot leans)
-       - Kd: how much you react to speed of tilt (helps dampen, start small)
-
-     Safety:
-       - If |pitch| > safety_angle_deg, motors are disabled and I is reset.
-  ---------------------------------------------------------------------- */
-
-  error = offset_angle - pitch_deg; // Target is 0 deg (upright)
+  error = offset_angle - pitch_deg; // Target is offset_angle deg (upright)
   pid_P = Kp * error;
   pid_D = Kd * (-gy_dps); // D term fights fast tilting
   pid_I += Ki * error * dt;
@@ -389,7 +350,7 @@ static void control_update(void)
   pid_u = pid_P + pid_I + pid_D;
 
   /* Motor output */
-  motor_set_output(pid_u, pitch_deg);
+  motor_set_output(pid_u, error);
 
   loop_time_us = cycles_to_us(DWT->CYCCNT - start_cycles); /* Last loop duration */
 }
@@ -448,10 +409,10 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
-  MX_I2C1_Init();
   MX_TIM6_Init();
   MX_USART2_UART_Init();
   MX_TIM1_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
   cycle_counter_init();
   HAL_Delay(50);
@@ -536,36 +497,36 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief I2C1 Initialization Function
+  * @brief I2C2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_I2C1_Init(void)
+static void MX_I2C2_Init(void)
 {
 
-  /* USER CODE BEGIN I2C1_Init 0 */
+  /* USER CODE BEGIN I2C2_Init 0 */
 
-  /* USER CODE END I2C1_Init 0 */
+  /* USER CODE END I2C2_Init 0 */
 
-  /* USER CODE BEGIN I2C1_Init 1 */
+  /* USER CODE BEGIN I2C2_Init 1 */
 
-  /* USER CODE END I2C1_Init 1 */
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 400000;
-  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.OwnAddress2 = 0;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.ClockSpeed = 400000;
+  hi2c2.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C1_Init 2 */
+  /* USER CODE BEGIN I2C2_Init 2 */
 
-  /* USER CODE END I2C1_Init 2 */
+  /* USER CODE END I2C2_Init 2 */
 
 }
 
@@ -725,9 +686,9 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
@@ -780,7 +741,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       }
     }
     /* 200 Hz -> generate 1 Hz flag */
-    if (++tick_count >= 200) {
+    if (++tick_count >= 100) {
       tick_count = 0;
       second_flag = 1;
     }
@@ -789,7 +750,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-  if (hi2c == &hi2c1) {
+  if (hi2c == &hi2c2) {
   i2c_busy = 0;
   data_ready = 1; /* signal main loop to process */
   }
@@ -797,7 +758,7 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
-  if (hi2c == &hi2c1) {
+  if (hi2c == &hi2c2) {
   i2c_busy = 0;  /* allow retry on next tick */
     /* Optionally, you could call HAL_I2C_DeInit/Init for severe errors */
   }
