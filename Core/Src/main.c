@@ -95,13 +95,13 @@ static float  gy_dps;
 /* -------------------------------------------------------------------------- */
 
 /* PID gains (output units: PWM counts if u_max = ARR). */
-static float Kp = 1.0f;  /* Start modest; adjust later */
-static float Ki = 0.0f;   /* Begin at 0 to tune P & D first */
-static float Kd = 0.0f;   /* Derivative on gyro (see formula) */
+static float Kp = 700.0f;  /* Start modest; adjust later */
+static float Ki = 10.0f;   /* Begin at 0 to tune P & D first */
+static float Kd = 10.0f;   /* Derivative on gyro (see formula) */
 
 /* Safety & scaling. */
 static float max_power_scale = 0.8f;   /* scale to 80% of 4199 (3359) */
-static float min_power_scale = 0.6f;   /* scale to 60% of 4199 (2519) */
+static float min_power_scale = 0.0f;   /* scale to 60% of 4199 (2519) */
 
 static float max_deadband = 1.0f;   /* Angle above which output is allowed */
 static float min_deadband = 1.0f;   /* Angle below which output/integral are reset */
@@ -217,8 +217,8 @@ static void transmit_once_per_second(void)
   second_flag = 0;
   /* Single concise snapshot (last computed values). */
   int n = snprintf(uart_tx_buf, sizeof(uart_tx_buf),
-                   "P= %.1f I= %.1f D= %.1f | Angle= %.2f error= %.2f PWM= %.0f | loop_us= %lu\r\n",
-                   pid_P, pid_I, pid_D, pitch_deg, error, duty, (unsigned long)loop_time_us);
+                   "P= %.1f I= %.1f D= %.1f | Angle= %.2f error= %.2f PWM= %.0f PID= %.1f | loop_us= %lu\r\n",
+                   pid_P, pid_I, pid_D, pitch_deg, error, duty, pid_u, (unsigned long)loop_time_us);
   if (n > 0) {
     uart_tx_ready = 0;
     if (HAL_UART_Transmit_DMA(&huart2, (uint8_t*)uart_tx_buf, (uint16_t)n) != HAL_OK) {
@@ -330,7 +330,7 @@ static void control_update(void)
   /* Simple 2-axis pitch using only X (forward) and Z (up) acceleration.
     pitch ≈ atan2(-Ax, Az). This ignores Ay so it's a bit less noise sensitive for pure forward/back motion. */
 
-  pitch_acc_deg = atan2f(-ax_g, -az_g) * 57.2957795131f; /* rad->deg */
+  pitch_acc_deg = atan2f(-ax_g, az_g) * 57.2957795131f; /* rad->deg */
 
   if (!attitude_initialized) {
     prev_pitch_deg = pitch_acc_deg;
@@ -369,9 +369,9 @@ static void process_sample_and_stream(void)
   /* Convert to physical units */
   ax_g = (float)ax_raw / ACCEL_LSB_PER_G;
   // ay_g = (float)ay_raw / ACCEL_LSB_PER_G; // Remove for performance
-  az_g = (float)az_raw / ACCEL_LSB_PER_G;
+  az_g = -(float)az_raw / ACCEL_LSB_PER_G;
   // gx_dps = (float)gx_raw / GYRO_LSB_PER_DPS; // Remove for performance
-  gy_dps = (float)gy_raw / GYRO_LSB_PER_DPS;
+  gy_dps = -(float)gy_raw / GYRO_LSB_PER_DPS;
   // gz_dps = (float)gz_raw / GYRO_LSB_PER_DPS; // Remove for performance
   // temp_c = (float)temp_raw / 340.0f + 36.53f; // Remove for performance
 
