@@ -95,20 +95,20 @@ static float  gy_dps;
 /* -------------------------------------------------------------------------- */
 
 /* PID gains (output units: PWM counts if u_max = ARR). */
-static float Kp = 700.0f;  /* Start modest; adjust later */
-static float Ki = 10.0f;   /* Begin at 0 to tune P & D first */
-static float Kd = 10.0f;   /* Derivative on gyro (see formula) */
+static float Kp = 1500.0f;  /* Start modest; adjust later */
+static float Ki = 5.0f;   /* Begin at 0 to tune P & D first */
+static float Kd = 0.7f;   /* Derivative on gyro (see formula) */
 
 /* Safety & scaling. */
 static float max_power_scale = 0.8f;   /* scale to 80% of 4199 (3359) */
 static float min_power_scale = 0.0f;   /* scale to 60% of 4199 (2519) */
 
-static float max_deadband = 1.0f;   /* Angle above which output is allowed */
-static float min_deadband = 1.0f;   /* Angle below which output/integral are reset */
+static float max_deadband = 0.0f;   /* Angle above which output is allowed */
+static float min_deadband = 0.0f;   /* Angle below which output/integral are reset */
 
 static float safety_angle_deg = 35.0f; /* Disable motors beyond this tilt degree */
 
-static float offset_angle = -2.0f; /* Manual angle offsets. */
+static float offset_angle = -1.5f; /* Manual angle offsets. */
 
 
 /* Integral windup guard (absolute value clamp). */
@@ -420,6 +420,7 @@ int main(void)
       /* If this fails, blink or stay here for debugging */
       char err[] = "MPU init failed\r\n";
       HAL_UART_Transmit(&huart2, (uint8_t*)err, sizeof(err)-1, HAL_MAX_DELAY);
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
       while (1) {
         HAL_Delay(1000);
       }
@@ -715,9 +716,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOE, DIR_FWD_Pin|DIR_REV_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : DIR_FWD_Pin DIR_REV_Pin */
   GPIO_InitStruct.Pin = DIR_FWD_Pin|DIR_REV_Pin;
@@ -725,6 +730,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PD14 */
+  GPIO_InitStruct.Pin = GPIO_PIN_14;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
