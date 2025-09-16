@@ -95,9 +95,9 @@ static float  gy_dps;
 /* -------------------------------------------------------------------------- */
 
 /* PID gains (output units: PWM counts if u_max = ARR). */
-static float Kp = 1500.0f;  /* Start modest; adjust later */
+static float Kp = 1050.0f;  /* Start modest; adjust later */
 static float Ki = 5.0f;   /* Begin at 0 to tune P & D first */
-static float Kd = 0.7f;   /* Derivative on gyro (see formula) */
+static float Kd = 0.25f;   /* Derivative on gyro (see formula) */
 
 /* Safety & scaling. */
 static float max_power_scale = 0.8f;   /* scale to 80% of 4199 (3359) */
