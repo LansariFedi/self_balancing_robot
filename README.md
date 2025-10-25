@@ -4,7 +4,7 @@
   <img src="Balanced.gif" alt="Self-balancing robot demo" width="640" />
 </p>
 
-#### Final Result
+#### Final Result (Live Demo)
 [![Final Result](https://img.youtube.com/vi/5E3Wzl0gn_s/0.jpg)](https://youtu.be/5E3Wzl0gn_s)
 
 A compact two‑wheel, self‑balancing robot built around an STM32F407 MCU, an MPU‑6050 IMU for angle sensing, and an L298N dual H‑bridge for motor drive. The firmware runs a 200 Hz control loop with a complementary filter for attitude estimation and a PID controller to keep the robot upright.
